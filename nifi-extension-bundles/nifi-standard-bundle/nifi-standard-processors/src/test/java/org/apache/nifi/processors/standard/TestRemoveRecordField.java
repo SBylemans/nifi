@@ -41,6 +41,8 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import static org.apache.nifi.schema.access.SchemaAccessUtils.INHERIT_RECORD_SCHEMA;
+import static org.apache.nifi.serialization.SchemaRegistryRecordSetWriter.NO_SCHEMA;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 
@@ -58,7 +60,7 @@ class TestRemoveRecordField {
 
         final JsonRecordSetWriter jsonWriter = new JsonRecordSetWriter();
         runner.addControllerService("writer", jsonWriter);
-        runner.setProperty(jsonWriter, SchemaAccessUtils.SCHEMA_ACCESS_STRATEGY, SchemaAccessUtils.INHERIT_RECORD_SCHEMA);
+        runner.setProperty(jsonWriter, SchemaAccessUtils.SCHEMA_ACCESS_STRATEGY, INHERIT_RECORD_SCHEMA);
         runner.setProperty(jsonWriter, JsonRecordSetWriter.SUPPRESS_NULLS, JsonRecordSetWriter.NEVER_SUPPRESS);
         runner.setProperty(jsonWriter, JsonRecordSetWriter.PRETTY_PRINT_JSON, "true");
         runner.setProperty(jsonWriter, jsonWriter.getSchemaWriteStrategyDescriptor(), SchemaRegistryRecordSetWriter.AVRO_SCHEMA_ATTRIBUTE);
@@ -85,14 +87,14 @@ class TestRemoveRecordField {
         runner.assertValid();
 
         runner.enqueue(
-                "{}".getBytes(StandardCharsets.UTF_8),
-                Collections.singletonMap("remove.path", "/")
+            "{}".getBytes(StandardCharsets.UTF_8),
+            Collections.singletonMap("remove.path", "/")
         );
 
         runner.run();
         runner.assertAllFlowFilesTransferred(AbstractRecordProcessor.REL_FAILURE, 1);
         runner.getFlowFilesForRelationship(AbstractRecordProcessor.REL_FAILURE).get(0)
-                .assertAttributeEquals("record.error.message", "org.apache.nifi.processor.exception.ProcessException Thrown");
+            .assertAttributeEquals("record.error.message", "org.apache.nifi.processor.exception.ProcessException Thrown");
     }
 
     @Test
@@ -342,21 +344,22 @@ class TestRemoveRecordField {
     }
 
     private void executeRemovalTest(final String inputSchema, final String inputFlowFile, final String outputSchema, final String outputFlowFile, final String... fieldsToRemove)
-            throws IOException, InitializationException {
-        executePreparation(inputSchema, inputFlowFile, fieldsToRemove);
+        throws IOException, InitializationException {
+        executePreparation(inputSchema, inputFlowFile, outputSchema, fieldsToRemove);
 
         runner.run();
 
         assertOutput(outputSchema, outputFlowFile);
     }
 
-    private void executePreparation(final String inputSchema, final String inputFlowFile, final String... fieldsToRemove) throws IOException, InitializationException {
+    private void executePreparation(final String inputSchema, final String inputFlowFile, final String outputSchema, final String... fieldsToRemove) throws IOException, InitializationException {
         setUpJsonReader(inputSchema);
+        setupJsonWriter(outputSchema);
 
         final String fieldName = "field-to-remove-";
         final AtomicInteger counter = new AtomicInteger(0);
         final Map<String, String> properties = Arrays.stream(fieldsToRemove)
-                .collect(Collectors.toMap(f -> fieldName + counter.incrementAndGet(), f -> f));
+            .collect(Collectors.toMap(f -> fieldName + counter.incrementAndGet(), f -> f));
         setUpRunner(inputFlowFile, properties);
     }
 
@@ -392,8 +395,24 @@ class TestRemoveRecordField {
         runner.setProperty(AbstractRecordProcessor.RECORD_READER, "reader");
     }
 
+    private void setupJsonWriter(final String schemaFilePath) throws IOException, InitializationException {
+        final JsonRecordSetWriter jsonRecordSetWriter = new JsonRecordSetWriter();
+        runner.addControllerService("writer", jsonRecordSetWriter);
+        if (schemaFilePath == null) {
+            runner.setProperty(jsonRecordSetWriter, SchemaAccessUtils.SCHEMA_ACCESS_STRATEGY, INHERIT_RECORD_SCHEMA);
+            runner.setProperty(jsonRecordSetWriter, "Schema Write Strategy", NO_SCHEMA.getValue());
+        } else {
+            final String inputSchemaText = new String(Files.readAllBytes(Paths.get(TEST_RESOURCES_FOLDER, "input_schema", schemaFilePath)));
+            runner.setProperty(jsonRecordSetWriter, SchemaAccessUtils.SCHEMA_ACCESS_STRATEGY, SchemaAccessUtils.SCHEMA_TEXT_PROPERTY);
+            runner.setProperty(jsonRecordSetWriter, SchemaAccessUtils.SCHEMA_TEXT, inputSchemaText);
+            runner.setProperty(jsonRecordSetWriter, "Schema Write Strategy", NO_SCHEMA.getValue());
+        }
+        runner.enableControllerService(jsonRecordSetWriter);
+        runner.setProperty(AbstractRecordProcessor.RECORD_WRITER, "writer");
+    }
+
     private void setUpRunner(final String flowFilePath, final Map<String, String> properties) throws IOException {
         runner.enqueue(Paths.get(TEST_RESOURCES_FOLDER, "input", flowFilePath));
-        properties.forEach((propertyName, propertyValue) -> runner.setProperty(propertyName, propertyValue));
+        properties.forEach((propertyName,propertyValue) -> runner.setProperty(propertyName, propertyValue));
     }
 }
